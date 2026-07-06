@@ -79,7 +79,10 @@ thread. The skill lands in `data/skills/local-user/`.
 3. Run the server and expose it: `uvicorn reelskill.server:app --port 8000` plus a
    tunnel (`ngrok http 8000`) or a real deployment (Cloud Run works well).
 4. In the App Dashboard, set the webhook callback URL to `https://<host>/webhook` with
-   your `IG_VERIFY_TOKEN`, and subscribe to the **`messages`** field.
+   your `IG_VERIFY_TOKEN`, and subscribe to the **`messages`** field. Note the dashboard
+   banner: webhooks are only delivered once the app is in **published (Live) state** --
+   flip the app to Live (this may require filling in a privacy policy URL in Settings >
+   Basic). Tester-gating still applies, so going Live does not open the bot to strangers.
 5. Generate an access token for the bot account → `IG_ACCESS_TOKEN`.
 6. Dev mode: only accounts with a role on the app can DM the bot — enough to test the
    whole loop with your own account. Public launch needs Advanced Access app review for

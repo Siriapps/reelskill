@@ -53,6 +53,15 @@ Remaining work, in priority order:
 
 ## Session log
 
+### 2026-07-06 (evening) — Guardrails + published to GitHub
+- Added `.gitignore` (.env, data/, .venv/) BEFORE first commit; verified no secrets tracked.
+- Added `IG_ALLOWED_SENDERS` allowlist (config + server) and startup warnings when
+  app secret / allowlist are unset. Sender ID is logged on every event for easy setup.
+- Published public repo: https://github.com/Siriapps/reelskill (initial commit 1c3d21b
+  + this follow-up). User's Meta app: receiver account connected, token in .env,
+  tester added. Remaining IG wiring: IG_APP_SECRET, webhook callback URL via ngrok,
+  app to Live/published state (required for webhook delivery per dashboard banner).
+
 ### 2026-07-06 — /watch integration, trigger-word mode, first live e2e
 - Added `reelskill/frames.py`: ffmpeg frame sampling (auto-scaled 30–100 frames,
   512px, timestamped filenames) + mono 16kHz audio — the technique from the popular
