@@ -1,0 +1,11 @@
+# Secrets -- never commit
+.env
+
+# Virtualenv / caches
+.venv/
+__pycache__/
+*.pyc
+
+# Runtime data: downloaded videos, generated skills, pending state (personal content)
+data/
+meta-skill/find-skills/library/
