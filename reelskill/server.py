@@ -24,6 +24,7 @@ INBOX_DIR = DATA_DIR / "inbox"
 INBOX_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)  # avoid logging access_token in URLs
 log = logging.getLogger("reelskill.server")
 
 app = FastAPI(title="ReelSkill", version="0.1.0")
@@ -33,6 +34,10 @@ _seen_message_ids: set[str] = set()
 
 @app.on_event("startup")
 async def warn_if_unguarded() -> None:
+    log.info(
+        "Trigger mode: %s",
+        f"word '{IG_TRIGGER_WORD}' required in DM" if IG_TRIGGER_WORD else "process every reel immediately",
+    )
     if not IG_APP_SECRET:
         log.warning(
             "IG_APP_SECRET is empty: webhook signature verification is DISABLED. "
@@ -60,11 +65,23 @@ async def webhook_verify(
 @app.post("/webhook")
 async def webhook_receive(request: Request, background: BackgroundTasks):
     body = await request.body()
-    if not verify_signature(body, request.headers.get("X-Hub-Signature-256")):
+    sig = request.headers.get("X-Hub-Signature-256")
+    if not verify_signature(body, sig):
+        log.warning("Rejected webhook: bad signature (header present: %s)", bool(sig))
         raise HTTPException(status_code=403, detail="Bad signature")
 
     payload = json.loads(body)
-    for event in extract_reel_events(payload):
+    events = extract_reel_events(payload)
+    log.info(
+        "Webhook POST object=%s entries=%d events=%d",
+        payload.get("object"),
+        len(payload.get("entry", [])),
+        len(events),
+    )
+    if not events and payload.get("entry"):
+        log.warning("Webhook had entries but no parseable messaging events: %s", list(payload.keys()))
+
+    for event in events:
         # Personal-agent guardrail: only the owner's account may drive the pipeline.
         log.info("Webhook event from sender %s", event["sender_id"])
         if IG_ALLOWED_SENDERS and event["sender_id"] not in IG_ALLOWED_SENDERS:
@@ -100,6 +117,10 @@ def _pop_stashed_reel(sender: str) -> dict | None:
     return stash
 
 
+def _triggered(text: str | None) -> bool:
+    return bool(IG_TRIGGER_WORD and text and IG_TRIGGER_WORD in text.lower())
+
+
 async def _handle_event(event: dict) -> None:
     sender = event["sender_id"]
     try:
@@ -107,18 +128,22 @@ async def _handle_event(event: dict) -> None:
             # Download immediately either way: CDN attachment URLs expire.
             video = await download_reel(event["cdn_url"], event["reel_video_id"])
             caption = event.get("title") or ""
-            if IG_TRIGGER_WORD:
-                # Personal-account mode: hold silently until the trigger word arrives,
-                # so ordinary reel shares in the thread are left alone.
+            text = event.get("text") or ""
+            if IG_TRIGGER_WORD and not _triggered(text):
+                # Personal-account mode: hold silently until the trigger word arrives.
+                # If you share a reel AND type the trigger in the same DM, we process now.
+                log.info("Stashed reel %s for sender %s (waiting for '%s')", event["reel_video_id"], sender, IG_TRIGGER_WORD)
                 _stash_reel(sender, video, caption)
                 return
-            await send_dm(sender, "Got it -- watching that reel now. Give me a minute...")
-            result = await process_reel(sender, video, caption=caption)
+            await send_dm(sender, "On it -- watching that reel now. Give me a minute...")
+            extra = text.lower().replace(IG_TRIGGER_WORD, "").strip() if _triggered(text) else ""
+            full_caption = caption + (f"\n\nUser instruction: {extra}" if extra else "")
+            result = await process_reel(sender, video, caption=full_caption)
             await send_dm(sender, result.message)
 
         elif event.get("text"):
             text = event["text"]
-            triggered = IG_TRIGGER_WORD and IG_TRIGGER_WORD in text.lower()
+            triggered = _triggered(text)
 
             if triggered and (stash := _pop_stashed_reel(sender)):
                 await send_dm(sender, "On it -- watching that reel now. Give me a minute...")
@@ -137,7 +162,8 @@ async def _handle_event(event: dict) -> None:
                 await send_dm(
                     sender,
                     f"No reel waiting. Share a reel to this chat, then say '{IG_TRIGGER_WORD}' "
-                    "and I'll turn it into a reusable skill.",
+                    "(same message or a follow-up) and I'll turn it into a reusable skill. "
+                    "Skills are stored privately on your ReelSkill server -- not in any Claude account.",
                 )
             elif not IG_TRIGGER_WORD:
                 await send_dm(

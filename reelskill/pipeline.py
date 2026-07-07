@@ -72,7 +72,9 @@ async def _package(
             f"Done! I turned that reel into a skill: \"{bundle.name}\".\n\n"
             f"{bundle.description}\n\n"
             f"It's in your library as '{bundle.slug}' -- your find-skills assistant "
-            f"will pick it up automatically next time it applies."
+            f"will pick it up automatically next time it applies.\n\n"
+            f"(Stored privately on your ReelSkill server -- nothing is uploaded to any "
+            f"third-party account.)"
         ),
         skill_path=skill_path,
     )
@@ -134,7 +136,8 @@ async def process_reel(user_id: str, video_path: Path, caption: str = "") -> Pip
             message=(
                 f"I watched \"{tutorial.title}\" and extracted {len(tutorial.steps)} steps, "
                 f"but this reel needs something I couldn't find:\n{questions}\n\n"
-                "Reply here with a link or description and I'll finish building the skill."
+                "Reply here with a link or description and I'll finish building the skill.\n\n"
+                "(Your skill will be stored privately on your ReelSkill server.)"
             ),
         )
 
