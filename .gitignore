@@ -9,3 +9,9 @@ __pycache__/
 # Runtime data: downloaded videos, generated skills, pending state (personal content)
 data/
 meta-skill/find-skills/library/
+
+# Local helper binaries (cloudflared etc.)
+tools/
+
+# Local server/test logs
+*.log

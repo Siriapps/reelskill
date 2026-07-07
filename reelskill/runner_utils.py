@@ -1,5 +1,6 @@
 """Run a single ADK agent once and parse its structured output."""
 
+import asyncio
 import logging
 import re
 import uuid
@@ -26,8 +27,31 @@ def _strip_fences(text: str) -> str:
     return text.strip()
 
 
+# Gemini intermittently returns 503 UNAVAILABLE ("high demand"); ride it out instead
+# of failing the whole DM. Last attempt swaps to the fallback model.
+_RETRY_DELAYS = (15, 30, 45)
+_FALLBACK_MODEL = "gemini-flash-lite-latest"
+
+
 async def run_agent(agent: Agent, parts: list[types.Part], schema: type[T], user_id: str) -> T:
-    """One-shot invocation: build a runner+session, send parts, validate final JSON output."""
+    """One-shot invocation with 503 retries: build a runner+session, send parts,
+    validate final JSON output."""
+    for i, delay in enumerate((*_RETRY_DELAYS, None)):
+        try:
+            return await _run_agent_once(agent, parts, schema, user_id)
+        except Exception as exc:
+            if delay is None or "503" not in str(exc):
+                raise
+            log.warning("Agent %s hit 503 (attempt %d); retrying in %ds", agent.name, i + 1, delay)
+            await asyncio.sleep(delay)
+            if delay == _RETRY_DELAYS[-1]:
+                # ponytail: mutates the shared agent's model; fine for a single-user demo
+                agent.model = _FALLBACK_MODEL
+                log.warning("Agent %s switching to fallback model %s", agent.name, _FALLBACK_MODEL)
+    raise AssertionError("unreachable")
+
+
+async def _run_agent_once(agent: Agent, parts: list[types.Part], schema: type[T], user_id: str) -> T:
     runner = InMemoryRunner(agent=agent, app_name="reelskill")
     session = await runner.session_service.create_session(
         app_name="reelskill", user_id=user_id, session_id=uuid.uuid4().hex

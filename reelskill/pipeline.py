@@ -16,7 +16,7 @@ from .agents import build_resolver_agent, extractor_agent, packager_agent
 from .config import DATA_DIR, SKILLS_DIR
 from .frames import extract_audio, extract_frames
 from .runner_utils import run_agent
-from .schemas import ExtractedTutorial, ResourceReport, SkillBundle
+from .schemas import ExtractedTutorial, ResolvedResource, ResourceReport, SkillBundle
 
 log = logging.getLogger(__name__)
 
@@ -114,15 +114,29 @@ async def process_reel(user_id: str, video_path: Path, caption: str = "") -> Pip
 
     resources = ResourceReport()
     if tutorial.required_resources:
-        resources = await run_agent(
-            build_resolver_agent(),
-            [types.Part.from_text(
-                text="Resources JSON:\n"
-                + json.dumps([r.model_dump() for r in tutorial.required_resources], indent=2)
-            )],
-            ResourceReport,
-            user_id,
-        )
+        try:
+            resources = await run_agent(
+                build_resolver_agent(),
+                [types.Part.from_text(
+                    text="Resources JSON:\n"
+                    + json.dumps([r.model_dump() for r in tutorial.required_resources], indent=2)
+                )],
+                ResourceReport,
+                user_id,
+            )
+        except Exception:
+            # Google Search grounding has its own (small) free-tier quota; a 429 here
+            # shouldn't kill the run. Fall back to the URLs the extractor captured.
+            log.exception("resource_resolver failed; falling back to extractor-captured URLs")
+            resources = ResourceReport(resources=[
+                ResolvedResource(
+                    name=r.name,
+                    status="found" if r.mentioned_url else "not_found",
+                    resolved_url=r.mentioned_url,
+                    note=r.description if r.mentioned_url else f"{r.description} (search unavailable; please provide a link)",
+                )
+                for r in tutorial.required_resources
+            ])
 
     missing = [r for r in resources.resources if r.status == "not_found"]
     if missing:

@@ -5,6 +5,17 @@
 
 ## Current state
 
+- **2026-07-06 (late):** "Something went wrong" DM bug diagnosed: Gemini free-tier
+  429 RESOURCE_EXHAUSTED, specifically the `resource_resolver` agent (google_search
+  grounding has its own small daily free quota, exhausted by retries). Fix:
+  `pipeline.py` now catches resolver failures and falls back to extractor-captured
+  `mentioned_url`s instead of crashing. Verified on a real reel (Claude Code debugging
+  tutorial): 7 steps extracted + clarification DM produced. Remaining risk: free tier
+  ~10 req/min + daily caps (reset midnight PT); packager also 429'd once under rapid
+  retries. For demo reliability: enable billing on the key or use a key from a fresh
+  Google Cloud project. Note: `.env` sets `IG_TRIGGER_WORD=gemini` (not the "claude"
+  default); a reel is stashed in `data/inbox/` awaiting that word. Removed duplicate
+  `REELSKILL_MODEL` line from `.env`.
 - **Code:** MVP complete and now VERIFIED END-TO-END against live Gemini (2026-07-06):
   `process_reel` on a synthetic ffmpeg test clip produced a correct, gap-filled
   SKILL.md (`data/skills/test-user/generate-color-test-pattern-video-ffmpeg/`),

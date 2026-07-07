@@ -91,6 +91,12 @@ async def download_reel(cdn_url: str, reel_video_id: str) -> Path:
     instead of a raw CDN mp4 -- those must go through yt-dlp to get the real video."""
     dest = VIDEO_DIR / f"{reel_video_id}.mp4"
 
+    # Re-shares of the same reel reuse the existing file. Also prevents a re-download
+    # from deleting the mp4 out from under a concurrent pipeline run.
+    if _is_valid_mp4(dest):
+        log.info("Reusing already-downloaded reel %s (%d bytes)", reel_video_id, dest.stat().st_size)
+        return dest
+
     if cdn_url and not _is_instagram_page(cdn_url):
         try:
             await _http_download(cdn_url, dest)
