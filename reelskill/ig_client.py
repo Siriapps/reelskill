@@ -1,8 +1,11 @@
 """Thin client for the Instagram Messaging API (Instagram API with Instagram Login)."""
 
+import asyncio
 import hashlib
 import hmac
 import logging
+import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -10,6 +13,8 @@ import httpx
 from .config import GRAPH_API_BASE, IG_ACCESS_TOKEN, IG_APP_SECRET, VIDEO_DIR
 
 log = logging.getLogger(__name__)
+
+_YTDLP = Path(sys.executable).parent / ("yt-dlp.exe" if sys.platform == "win32" else "yt-dlp")
 
 
 def verify_signature(payload: bytes, signature_header: str | None) -> bool:
@@ -35,16 +40,75 @@ async def send_dm(recipient_igsid: str, text: str) -> None:
     resp.raise_for_status()
 
 
-async def download_reel(cdn_url: str, reel_video_id: str) -> Path:
-    """Download the reel immediately -- Meta CDN attachment URLs expire quickly."""
-    dest = VIDEO_DIR / f"{reel_video_id}.mp4"
+def _is_instagram_page(url: str) -> bool:
+    return "instagram.com" in url and any(p in url for p in ("/reel/", "/p/", "/tv/"))
+
+
+def _is_valid_mp4(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size < 10_000:
+        return False
+    try:
+        subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+            capture_output=True,
+            check=True,
+            timeout=30,
+        )
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+async def _http_download(url: str, dest: Path) -> None:
     async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-        async with client.stream("GET", cdn_url) as resp:
+        async with client.stream("GET", url) as resp:
             resp.raise_for_status()
             with open(dest, "wb") as f:
                 async for chunk in resp.aiter_bytes():
                     f.write(chunk)
-    log.info("Downloaded reel %s -> %s (%d bytes)", reel_video_id, dest, dest.stat().st_size)
+
+
+def _ytdlp_download(url: str, dest: Path) -> None:
+    """Blocking yt-dlp fetch -- same approach as the Claude /watch skill."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        dest.unlink()
+    cmd = [
+        str(_YTDLP),
+        "-f", "best[ext=mp4]/best",
+        "--merge-output-format", "mp4",
+        "--no-playlist",
+        "-o", str(dest),
+        url,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    if result.returncode != 0:
+        raise RuntimeError(f"yt-dlp failed: {result.stderr[-500:]}")
+
+
+async def download_reel(cdn_url: str, reel_video_id: str) -> Path:
+    """Download the reel immediately. Meta often sends an instagram.com/reel/ permalink
+    instead of a raw CDN mp4 -- those must go through yt-dlp to get the real video."""
+    dest = VIDEO_DIR / f"{reel_video_id}.mp4"
+
+    if cdn_url and not _is_instagram_page(cdn_url):
+        try:
+            await _http_download(cdn_url, dest)
+            if _is_valid_mp4(dest):
+                log.info("Downloaded reel %s via CDN (%d bytes)", reel_video_id, dest.stat().st_size)
+                return dest
+            log.warning("CDN bytes for %s were not a valid mp4; falling back to yt-dlp", reel_video_id)
+        except Exception:
+            log.warning("CDN download failed for %s; falling back to yt-dlp", reel_video_id, exc_info=True)
+
+    page_url = cdn_url if cdn_url and _is_instagram_page(cdn_url) else None
+    if not page_url:
+        raise RuntimeError(f"No Instagram page URL to download reel {reel_video_id}")
+
+    await asyncio.to_thread(_ytdlp_download, page_url, dest)
+    if not _is_valid_mp4(dest):
+        raise RuntimeError(f"yt-dlp could not produce a valid mp4 for reel {reel_video_id}")
+    log.info("Downloaded reel %s via yt-dlp (%d bytes)", reel_video_id, dest.stat().st_size)
     return dest
 
 

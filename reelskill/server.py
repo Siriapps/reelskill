@@ -171,10 +171,17 @@ async def _handle_event(event: dict) -> None:
                     "Share a reel to this chat and I'll turn it into a reusable skill for your AI tools.",
                 )
             # else: personal-account mode, untriggered chatter -- stay silent.
-    except Exception:
+    except Exception as exc:
         log.exception("Failed to handle event from %s", sender)
+        detail = str(exc).lower()
+        if "yt-dlp" in detail or "download" in detail:
+            msg = "I couldn't download that reel's video. Try sharing it again."
+        elif "invalid argument" in detail or "gemini" in detail:
+            msg = "I downloaded the reel but had trouble analyzing the video. Try sharing it again."
+        else:
+            msg = "Something went wrong processing that. Try sharing it again."
         try:
-            await send_dm(sender, "Something went wrong processing that. Try sharing it again.")
+            await send_dm(sender, msg)
         except Exception:
             log.exception("Also failed to notify %s", sender)
 
